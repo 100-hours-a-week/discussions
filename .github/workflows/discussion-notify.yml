@@ -34,4 +34,6 @@ jobs:
           DISCORD_WEBHOOK_URL_FEED: ${{ secrets.DISCORD_WEBHOOK_URL_FEED }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCUSSION_CATEGORIES: ${{ vars.DISCUSSION_CATEGORIES }}
+          # 답변 희망 멘토 @멘션에 필요 (사내 핸들 → 디스코드 ID 매핑)
+          MENTORS_JSON: ${{ secrets.MENTORS_JSON }}
         run: node scripts/notify-discussion.mjs

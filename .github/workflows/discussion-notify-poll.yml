@@ -55,6 +55,8 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCUSSION_CATEGORIES: ${{ vars.DISCUSSION_CATEGORIES }}
           POLL_LOOKBACK_MINUTES: ${{ vars.POLL_LOOKBACK_MINUTES }}
+          # 답변 희망 멘토 @멘션에 필요 (사내 핸들 → 디스코드 ID 매핑)
+          MENTORS_JSON: ${{ secrets.MENTORS_JSON }}
         run: node scripts/poll-new-discussions.mjs
 
       # 주의: GitHub Actions 캐시는 7일간 미사용 시 자동 삭제된다 (폴링 중단 7일 후 마커 소실).
