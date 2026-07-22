@@ -2,7 +2,7 @@
 // GitHub Actions의 discussion_comment(created) 이벤트 페이로드를 읽어 웹훅으로 전송한다.
 
 import { readFile } from 'node:fs/promises';
-import { sendLongMessage } from './lib/discord.mjs';
+import { deliverThreadedComment, resolveTransport, sendLongMessage } from './lib/discord.mjs';
 import { buildNewCommentMessage } from './lib/message.mjs';
 import { matchesCategory } from './lib/discussions.mjs';
 import {
@@ -12,7 +12,31 @@ import {
 } from './lib/mentors.mjs';
 
 async function main() {
-  const webhookUrl = requireEnv('DISCORD_WEBHOOK_URL');
+  // 전송 계층 선택: 봇 토큰+FEED_CHANNEL_ID가 있으면 봇(디스커션 스레드에 댓글, 없으면 채널 폴백),
+  // 없으면 기존 피드 웹훅으로 폴백한다(무중단 전환).
+  const transport = resolveTransport('feed');
+  if (transport.mode === 'bot') {
+    console.log(`피드 봇 채널: ${transport.channelEnvName}`);
+    // 활성(미보관) 스레드 조회는 길드 단위 API(GET /guilds/{id}/threads/active)로만 가능하다
+    // — 채널 단위 활성 조회 엔드포인트는 API v10에 없다. DISCORD_GUILD_ID가 없으면 이 조회를
+    // 건너뛰므로, 아직 보관되지 않은(최근 7일 이내) 디스커션의 코멘트는 스레드를 찾지 못하고
+    // 매번 피드 채널로 폴백한다. 개별 코멘트 경고는 원인을 'not-found'로만 남겨 근본 원인이
+    // 가려지므로, 시작 시 한 번 근본 원인을 크게 알린다(silent 금지).
+    if (!transport.guildId) {
+      console.warn(
+        '경고: DISCORD_GUILD_ID 미설정 — 활성(미보관) 스레드 검색이 비활성화됩니다. ' +
+          '최근 디스커션의 코멘트는 스레드를 찾지 못해 피드 채널로 폴백됩니다. ' +
+          '스레드 연결을 원하면 DISCORD_GUILD_ID를 설정하세요.',
+      );
+    }
+  } else {
+    console.log(`피드 웹훅: ${transport.envName}`);
+    if (transport.partialBot) {
+      console.warn(
+        '경고: DISCORD_BOT_TOKEN은 설정됐지만 FEED_CHANNEL_ID가 없어 웹훅으로 폴백합니다(스레드 비활성).',
+      );
+    }
+  }
   const eventPath = requireEnv('GITHUB_EVENT_PATH');
 
   const event = JSON.parse(await readFile(eventPath, 'utf8'));
@@ -91,7 +115,21 @@ async function main() {
     category: categoryName,
   });
 
-  await sendLongMessage(webhookUrl, message);
+  if (transport.mode === 'bot') {
+    const result = await deliverThreadedComment(transport, {
+      number: discussion.number,
+      content: message,
+    });
+    if (result.via === 'thread') {
+      console.log(`원 디스커션 스레드에 코멘트 등록: #${discussion.number} (thread ${result.threadId})`);
+    } else {
+      console.warn(
+        `경고: #${discussion.number} 원 스레드에 남기지 못해 피드 채널에 표시했습니다 (${result.reason}${result.error ? `: ${result.error}` : ''}).`,
+      );
+    }
+  } else {
+    await sendLongMessage(transport.url, message);
+  }
   console.log(
     `디스코드 알림 전송 완료: #${discussion.number} 새 코멘트 (답변자: ${commenterLogin ?? '(알 수 없음)'})`,
   );

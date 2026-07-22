@@ -1,5 +1,7 @@
 // 디스코드 메시지 빌더 (순수 함수)
 
+import { isDiscordUserId } from './discord.mjs';
+
 /**
  * 새 디스커션 등록 알림 메시지. 본문 미리보기는 넣지 않는다.
  * @param {{title: string, url: string, author: string, category: string, mentor?: string|null}} discussion
@@ -33,12 +35,32 @@ export function buildNewCommentMessage(comment) {
 }
 
 /**
+ * 리마인드 아이템에서 멘션 가능한 디스코드 유저 ID를 순서대로 중복 없이 모은다.
+ * buildReminderMessage가 실제로 `<@ID>`를 렌더링하는 기준(isDiscordUserId)과 동일하므로,
+ * 이 목록을 그대로 allowed_mentions 화이트리스트로 넘기면
+ * "본문에 렌더링된 멘션 = 핑이 허용된 대상"이 항상 일치한다.
+ * @param {Array<{discordId?: string|null}>} unanswered
+ * @returns {string[]}
+ */
+export function collectReminderMentionIds(unanswered) {
+  const ids = [];
+  for (const item of unanswered) {
+    const id = item?.discordId;
+    if (isDiscordUserId(id) && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+/**
  * 미답변 디스커션 리마인드 메시지.
  * 미답변 디스커션을 한눈에 확인할 수 있도록 목록형 메시지로 구성한다.
- * 주의: 멘션 문구는 여기에 넣지 않는다 — 학생이 작성한 제목이 본문에 포함되므로
- * 멘션을 허용한 채 합쳐 보내면 제목 속 @everyone 등이 실제 핑되는 인젝션이 가능하다.
- * (멘션은 엔트리에서 별도 선행 메시지로 전송)
- * @param {Array<{title: string, url: string, author: string, category: string, labels?: string[], mentor?: string|null, mentorLogin?: string|null}>} unanswered
+ *
+ * 멘토 그룹 헤더에는 담당 멘토의 디스코드 멘션(`<@ID>`)을 함께 넣는다. 다만 본문에는
+ * 학생이 작성한 제목이 그대로 포함되므로, **전송 시 반드시 멘션 화이트리스트를 걸어야 한다**
+ * (collectReminderMentionIds → sendLongMessage(..., { allowedUserIds })).
+ * 멘션을 전면 허용(allowMentions=true)한 채 보내면 제목 속 @everyone/@here가 실제로
+ * 핑되는 멘션 인젝션이 가능하다.
+ * @param {Array<{title: string, url: string, author: string, category: string, labels?: string[], mentor?: string|null, mentorLogin?: string|null, discordId?: string|null, discordUsername?: string|null}>} unanswered
  * @returns {string}
  */
 export function buildReminderMessage(unanswered) {
@@ -84,12 +106,23 @@ export function buildReminderMessage(unanswered) {
     }
     const labelOf = (items) =>
       items.find((i) => i.mentor)?.mentor ?? items.find((i) => i.mentorLogin)?.mentorLogin;
+    // 담당 멘토 표기 3단 폴백:
+    //  1) 유효한 디스코드 숫자 ID → 실제 멘션 `<@ID>`
+    //  2) ID는 없지만 유저네임이 있으면(서버 미입장 등) → `(@유저네임)` 텍스트만 (핑 안 됨)
+    //  3) 둘 다 없으면 → 사내 핸들만 (아무것도 덧붙이지 않음)
+    // 스노플레이크가 아닌 값으로는 절대 `<@값>`을 만들지 않는다(깨진 멘션 방지).
+    const mentionOf = (items) => {
+      const id = items.find((i) => isDiscordUserId(i.discordId))?.discordId;
+      if (id) return ` <@${id}>`;
+      const username = items.find((i) => (i.discordUsername ?? '').trim())?.discordUsername;
+      return username ? ` (@${username.trim()})` : '';
+    };
     const mentorKeys = [...groups.keys()]
       .filter((key) => key !== null)
       .sort((a, b) => labelOf(groups.get(a)).localeCompare(labelOf(groups.get(b))));
     for (const key of mentorKeys) {
       const items = groups.get(key);
-      message += `\n**${labelOf(items)}** 멘토님 (${items.length}건)\n`;
+      message += `\n**${labelOf(items)}** 멘토님${mentionOf(items)} (${items.length}건)\n`;
       items.forEach((item) => {
         message += formatItem(item);
       });

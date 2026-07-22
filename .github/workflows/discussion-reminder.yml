@@ -30,6 +30,14 @@ jobs:
       - name: Send reminder to Discord
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 봇 모드: DISCORD_BOT_TOKEN이 있으면 봇으로(리마인드 채널 발송),
+          # 없으면 아래 웹훅으로 자동 폴백한다(무중단).
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          FEED_CHANNEL_ID: ${{ vars.FEED_CHANNEL_ID }}
+          REMIND_CHANNEL_ID: ${{ vars.REMIND_CHANNEL_ID }}
+          DISCORD_GUILD_ID: ${{ vars.DISCORD_GUILD_ID }}
+          # 채널 분리: 리마인드 전용 웹훅이 있으면 그쪽으로, 없으면 기존 단일 웹훅으로 폴백
+          DISCORD_WEBHOOK_URL_REMIND: ${{ secrets.DISCORD_WEBHOOK_URL_REMIND }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCUSSION_CATEGORIES: ${{ vars.DISCUSSION_CATEGORIES }}
           REMIND_SINCE: ${{ vars.REMIND_SINCE }}

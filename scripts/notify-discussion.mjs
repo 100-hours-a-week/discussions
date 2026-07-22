@@ -2,13 +2,25 @@
 // GitHub Actions의 discussion(created) 이벤트 페이로드를 읽어 웹훅으로 전송한다.
 
 import { readFile } from 'node:fs/promises';
-import { sendLongMessage } from './lib/discord.mjs';
+import { deliverNewDiscussion, resolveTransport, sendLongMessage } from './lib/discord.mjs';
 import { buildNewDiscussionMessage } from './lib/message.mjs';
 import { matchesCategory } from './lib/discussions.mjs';
 import { parseDesiredMentor } from './lib/mentors.mjs';
 
 async function main() {
-  const webhookUrl = requireEnv('DISCORD_WEBHOOK_URL');
+  // 전송 계층 선택: 봇 토큰+FEED_CHANNEL_ID가 있으면 봇(채널 발송 후 스레드 생성),
+  // 없으면 기존 피드 웹훅으로 폴백한다(무중단 전환).
+  const transport = resolveTransport('feed');
+  if (transport.mode === 'bot') {
+    console.log(`피드 봇 채널: ${transport.channelEnvName}`);
+  } else {
+    console.log(`피드 웹훅: ${transport.envName}`);
+    if (transport.partialBot) {
+      console.warn(
+        '경고: DISCORD_BOT_TOKEN은 설정됐지만 FEED_CHANNEL_ID가 없어 웹훅으로 폴백합니다(스레드 비활성).',
+      );
+    }
+  }
   const eventPath = requireEnv('GITHUB_EVENT_PATH');
 
   const event = JSON.parse(await readFile(eventPath, 'utf8'));
@@ -42,7 +54,28 @@ async function main() {
     mentor: desired?.handle ?? desired?.githubLogin ?? null,
   });
 
-  await sendLongMessage(webhookUrl, message);
+  if (transport.mode === 'bot') {
+    const result = await deliverNewDiscussion(transport, {
+      number: discussion.number,
+      title: discussion.title,
+      content: message,
+    });
+    if (result.threadError) {
+      console.warn(
+        `경고: #${discussion.number} 스레드 생성 실패(메시지는 전송됨): ${result.threadError}`,
+      );
+    } else if (!result.messageId) {
+      console.warn(
+        `경고: #${discussion.number} 메시지 ID를 받지 못해 스레드를 만들지 못했습니다(메시지는 전송됨).`,
+      );
+    } else if (!result.threadId) {
+      console.warn(
+        `경고: #${discussion.number} 스레드 ID를 응답에서 받지 못해 스레드를 만들지 못했습니다(메시지는 전송됨).`,
+      );
+    }
+  } else {
+    await sendLongMessage(transport.url, message);
+  }
   // 퍼블릭 Actions 로그에 제목이 남는다 — 개행 포함 제목으로 ::커맨드:: 주입이 안 되도록 한 줄로 정리
   console.log(`디스코드 알림 전송 완료: #${discussion.number} ${String(discussion.title ?? '').replace(/\s+/g, ' ')}`);
 }
