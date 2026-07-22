@@ -11,20 +11,20 @@
 //
 // 매핑 스키마 (mentors.json / MENTORS_JSON):
 //   {
-//     "max.cha": {
-//       "github": "Coreight98",              // 선택 — 깃헙 로그인. 없거나 null이면 "표시·멘션 전용" 멘토
+//     "mentor.one": {
+//       "github": "github-login-1",              // 선택 — 깃헙 로그인. 없거나 null이면 "표시·멘션 전용" 멘토
 //                                            //        (판정에서 제외돼 기본 판정으로 폴백, 표시·멘션·그룹핑은 유지)
 //       "discord": "123456789012345678",     // 선택 — 멘션용 숫자 ID(17~20자리 문자열). 없으면 null
-//       "discordUsername": "cajaemyeong",    // 선택 — 참고·해석용 유저네임. 없으면 null
-//       "aliases": ["max.chaa"]              // 선택 — 같은 멘토를 가리키는 별칭 키(오타 흡수용)
+//       "discordUsername": "example-username",    // 선택 — 참고·해석용 유저네임. 없으면 null
+//       "aliases": ["mentor.oen"]              // 선택 — 같은 멘토를 가리키는 별칭 키(오타 흡수용)
 //     },
-//     "grey.great": { "aliasOf": "gray.great" },  // 별칭 전용 항목(위 aliases와 등가, 방향만 반대)
-//     "charlotte.chk": "cohys7"              // 하위호환 — 문자열이면 {github: 값}으로 정규화(빈 문자열이면 github: null)
+//     "mentor.twoo": { "aliasOf": "mentor.two" },  // 별칭 전용 항목(위 aliases와 등가, 방향만 반대)
+//     "mentor.three": "github-login-3"              // 하위호환 — 문자열이면 {github: 값}으로 정규화(빈 문자열이면 github: null)
 //   }
 // 정규화 후 각 값은 항상 {github, discord, discordUsername} 형태(동결 객체)이며,
 // 별칭 키는 원 핸들과 **동일한 엔트리 객체**를 가리킨다(디스코드 정보까지 함께 공유).
 //
-// ⚠️ 디스코드 "아이디"로 유저네임(예: anyongjun97)을 넣으면 멘션이 동작하지 않으므로
+// ⚠️ 디스코드 "아이디"로 유저네임(예: some-username)을 넣으면 멘션이 동작하지 않으므로
 //    discord 값은 숫자 ID인지 검증하고, 아니면 명시적으로 실패시킨다 (silent fail 금지).
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -221,7 +221,7 @@ export function parseMentorMapping(parsed, sourceLabel = '멘토 매핑', { reda
     const handle = normalizeKey(rawHandle);
     if (!handle) throw new Error(`${sourceLabel}의 ${keyRef}가 비어 있습니다.`);
 
-    // 별칭 전용 항목: {"grey.great": {"aliasOf": "gray.great"}}
+    // 별칭 전용 항목: {"mentor.twoo": {"aliasOf": "mentor.two"}}
     if (isAliasOnlyEntry(rawEntry)) {
       const target = normalizeKey(rawEntry.aliasOf);
       if (!target) {
@@ -438,7 +438,7 @@ function normalizeGithubLogin(raw, sourceLabel, keyRef) {
 
 /**
  * 디스코드 숫자 ID 검증 — 없으면 null, 있으면 17~20자리 숫자 문자열이어야 한다.
- * 유저네임(anyongjun97 등)이 들어오면 멘션이 조용히 실패하므로 설정 오류로 던진다.
+ * 유저네임(숫자가 아닌 값)이 들어오면 멘션이 조용히 실패하므로 설정 오류로 던진다.
  * 오류 메시지에 값 자체는 싣지 않는다 (Secret 유출 방지).
  */
 function normalizeDiscordId(raw, sourceLabel, keyRef) {
