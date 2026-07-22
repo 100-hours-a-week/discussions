@@ -6,10 +6,20 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { deliverNewDiscussion, resolveTransport, sendLongMessage } from './lib/discord.mjs';
+import {
+  deliverNewDiscussion,
+  isDiscordUserId,
+  resolveTransport,
+  sendLongMessage,
+} from './lib/discord.mjs';
 import { buildNewDiscussionMessage } from './lib/message.mjs';
 import { matchesCategory } from './lib/discussions.mjs';
-import { parseDesiredMentor } from './lib/mentors.mjs';
+import {
+  findMentorDiscordId,
+  findMentorDiscordUsername,
+  loadMentorMappingFromEnv,
+  parseDesiredMentor,
+} from './lib/mentors.mjs';
 
 const DEFAULT_GRAPHQL_URL = 'https://api.github.com/graphql';
 const DEFAULT_MARKER_FILE = '.poll-marker';
@@ -196,6 +206,7 @@ async function main() {
   }
 
   const categoryFilter = parseList(process.env.DISCUSSION_CATEGORIES);
+  const mentorMapping = loadMentorMappingFromEnv();
   const markerFile = (process.env.MARKER_FILE ?? '').trim() || DEFAULT_MARKER_FILE;
   const lookbackMinutes = parseLookbackMinutes(process.env.POLL_LOOKBACK_MINUTES);
 
@@ -223,12 +234,22 @@ async function main() {
     }
 
     const desired = parseDesiredMentor({ title: discussion.title, body: discussion.body });
+    const mentorHandle = desired?.handle ?? desired?.githubLogin ?? null;
+    // 새 글 알림과 동일: 지정 멘토가 매핑돼 있으면 @멘션(화이트리스트로 인젝션 방지).
+    const mentorDiscordId = mentorHandle ? findMentorDiscordId(mentorMapping, mentorHandle) : null;
+    const mentorDiscordUsername = mentorHandle
+      ? findMentorDiscordUsername(mentorMapping, mentorHandle)
+      : null;
+    const allowedUserIds = isDiscordUserId(mentorDiscordId) ? [mentorDiscordId] : [];
+
     const message = buildNewDiscussionMessage({
       title: discussion.title,
       url: discussion.url,
       author: discussion.author?.login ?? '(알 수 없음)',
       category: categoryName,
-      mentor: desired?.handle ?? desired?.githubLogin ?? null,
+      mentor: mentorHandle,
+      mentorDiscordId,
+      mentorDiscordUsername,
     });
 
     if (transport.mode === 'bot') {
@@ -236,7 +257,7 @@ async function main() {
         number: discussion.number,
         title: discussion.title,
         content: message,
-      });
+      }, { allowedUserIds });
       if (result.threadError) {
         console.warn(
           `경고: #${discussion.number} 스레드 생성 실패(메시지는 전송됨): ${result.threadError}`,
@@ -251,7 +272,7 @@ async function main() {
         );
       }
     } else {
-      await sendLongMessage(transport.url, message);
+      await sendLongMessage(transport.url, message, { allowedUserIds });
     }
     // 퍼블릭 Actions 로그에 제목이 남는다 — 개행 포함 제목으로 ::커맨드:: 주입이 안 되도록 한 줄로 정리
     console.log(`디스코드 알림 전송 완료: #${discussion.number} ${String(discussion.title ?? '').replace(/\s+/g, ' ')}`);

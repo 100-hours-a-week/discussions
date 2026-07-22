@@ -2,10 +2,20 @@
 // GitHub Actions의 discussion(created) 이벤트 페이로드를 읽어 웹훅으로 전송한다.
 
 import { readFile } from 'node:fs/promises';
-import { deliverNewDiscussion, resolveTransport, sendLongMessage } from './lib/discord.mjs';
+import {
+  deliverNewDiscussion,
+  isDiscordUserId,
+  resolveTransport,
+  sendLongMessage,
+} from './lib/discord.mjs';
 import { buildNewDiscussionMessage } from './lib/message.mjs';
 import { matchesCategory } from './lib/discussions.mjs';
-import { parseDesiredMentor } from './lib/mentors.mjs';
+import {
+  findMentorDiscordId,
+  findMentorDiscordUsername,
+  loadMentorMappingFromEnv,
+  parseDesiredMentor,
+} from './lib/mentors.mjs';
 
 async function main() {
   // 전송 계층 선택: 봇 토큰+FEED_CHANNEL_ID가 있으면 봇(채널 발송 후 스레드 생성),
@@ -45,13 +55,27 @@ async function main() {
     `https://github.com/${event.repository?.full_name}/discussions/${discussion.number}`;
 
   const desired = parseDesiredMentor({ title: discussion.title, body: discussion.body });
+  const mentorHandle = desired?.handle ?? desired?.githubLogin ?? null;
+
+  // 답변 희망 멘토가 mentors.json에 매핑돼 있으면 즉시 @멘션한다(질문 올라오자마자 담당 멘토 알림).
+  // 매핑 없음/디스코드 정보 없음이면 태그 없이 텍스트만(3단 폴백). 학생 제목의 임의 멘션은
+  // 화이트리스트(지정 멘토 ID만)로 차단한다 — 리마인드와 동일한 인젝션 방지.
+  const mentorMapping = loadMentorMappingFromEnv();
+  const mentorLookup = desired?.handle ?? desired?.githubLogin ?? null;
+  const mentorDiscordId = mentorLookup ? findMentorDiscordId(mentorMapping, mentorLookup) : null;
+  const mentorDiscordUsername = mentorLookup
+    ? findMentorDiscordUsername(mentorMapping, mentorLookup)
+    : null;
+  const allowedUserIds = isDiscordUserId(mentorDiscordId) ? [mentorDiscordId] : [];
 
   const message = buildNewDiscussionMessage({
     title: discussion.title,
     url,
     author: discussion.user?.login ?? '(알 수 없음)',
     category: categoryName,
-    mentor: desired?.handle ?? desired?.githubLogin ?? null,
+    mentor: mentorHandle,
+    mentorDiscordId,
+    mentorDiscordUsername,
   });
 
   if (transport.mode === 'bot') {
@@ -59,7 +83,7 @@ async function main() {
       number: discussion.number,
       title: discussion.title,
       content: message,
-    });
+    }, { allowedUserIds });
     if (result.threadError) {
       console.warn(
         `경고: #${discussion.number} 스레드 생성 실패(메시지는 전송됨): ${result.threadError}`,
@@ -74,7 +98,7 @@ async function main() {
       );
     }
   } else {
-    await sendLongMessage(transport.url, message);
+    await sendLongMessage(transport.url, message, { allowedUserIds });
   }
   // 퍼블릭 Actions 로그에 제목이 남는다 — 개행 포함 제목으로 ::커맨드:: 주입이 안 되도록 한 줄로 정리
   console.log(`디스코드 알림 전송 완료: #${discussion.number} ${String(discussion.title ?? '').replace(/\s+/g, ' ')}`);

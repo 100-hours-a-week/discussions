@@ -3,17 +3,32 @@
 import { isDiscordUserId } from './discord.mjs';
 
 /**
+ * 답변 희망 멘토 표기 뒤에 붙일 디스코드 태그(3단 폴백). 리마인드 그룹 헤더와 동일 규칙:
+ *  1) 유효한 숫자 ID → ` <@ID>` (실제 핑)  2) 유저네임만 → ` (@유저네임)` (핑 없음)  3) 없음 → ''
+ * 스노플레이크가 아닌 값으로는 절대 `<@값>`을 만들지 않는다(깨진 멘션·인젝션 방지).
+ * @param {string|null} discordId
+ * @param {string|null} discordUsername
+ * @returns {string}
+ */
+function mentorTag(discordId, discordUsername) {
+  if (isDiscordUserId(discordId)) return ` <@${discordId}>`;
+  const username = (discordUsername ?? '').trim();
+  return username ? ` (@${username})` : '';
+}
+
+/**
  * 새 디스커션 등록 알림 메시지. 본문 미리보기는 넣지 않는다.
- * @param {{title: string, url: string, author: string, category: string, mentor?: string|null}} discussion
+ * 답변 희망 멘토가 mentors.json에 매핑돼 디스코드 ID가 있으면 실제 @멘션으로 즉시 알린다.
+ * @param {{title: string, url: string, author: string, category: string, mentor?: string|null, mentorDiscordId?: string|null, mentorDiscordUsername?: string|null}} discussion
  * @returns {string}
  */
 export function buildNewDiscussionMessage(discussion) {
-  const { title, url, author, category, mentor = null } = discussion;
+  const { title, url, author, category, mentor = null, mentorDiscordId = null, mentorDiscordUsername = null } = discussion;
 
   let message = `## 새 디스커션 등록\n`;
   message += `**[${category}] ${title}**\n`;
   message += `- 작성자: \`${author}\`\n`;
-  if (mentor) message += `- 답변 희망 멘토: \`${mentor}\`\n`;
+  if (mentor) message += `- 답변 희망 멘토: \`${mentor}\`${mentorTag(mentorDiscordId, mentorDiscordUsername)}\n`;
   message += `- 링크: <${url}>`;
   return message;
 }
