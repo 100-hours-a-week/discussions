@@ -2,7 +2,8 @@
 //
 // 지원하는 표기 관례:
 //  - 제목: "... (답변희망멘토: mentor.one)" / "(답변 희망 멘토 : mentor.two)" — 띄어쓰기 제각각
-//  - 본문: "🙋답변 희망 멘토" 섹션에 "사내핸들(이름)/@깃헙핸들" 형태 — @깃헙핸들이 있으면 추출 가능
+//         "멘토"는 선택이라 "(답변 희망: mentor.three)"처럼 멘토 없이도 인식한다(콜론은 필수).
+//  - 본문: "🙋답변 희망 멘토" / "🙋답변 희망" 섹션에 "사내핸들(이름)/@깃헙핸들" 형태 — @깃헙핸들이 있으면 추출 가능
 //  - 단, 표기 과정에서 깃헙 핸들·사내 핸들에 오타가 생길 수 있으므로
 //    멘토 매핑(사내 핸들 → 멘토 정보)을 1순위로 쓴다.
 //    매핑은 Actions Secret MENTORS_JSON(JSON 문자열)로 주입하며, 없으면 mentors.json 파일 폴백
@@ -28,13 +29,22 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 
-const TITLE_MENTOR_RE = /답변\s*희망\s*멘토\s*[:：]\s*([^)\]）】\n]+)/;
+// "멘토"는 선택 — 제목 표기 "답변 희망:"과 "답변 희망 멘토:" 둘 다 인식한다.
+// 콜론(: 또는 ：)은 필수로 유지한다 — 문장 속 "답변 희망"(콜론 없음)이 오매칭되지 않도록.
+const TITLE_MENTOR_RE = /답변\s*희망(?:\s*멘토)?\s*[:：]\s*([^)\]）】\n]+)/;
 // @ 바로 앞이 단어문자/`.`이면 이메일(name@corp.com)이므로 배제. '/@handle' 표기는 허용.
 const GITHUB_HANDLE_RE = /(?:^|[^\w@.])@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/;
 // 사내 핸들(xxx.yyy)은 각 세그먼트에 영문자가 최소 1개 있어야 함 — 버전 번호(3.2) 오인 방지.
 const INTERNAL_HANDLE_RE =
   /(?<![a-z0-9.])[a-z0-9]*[a-z][a-z0-9]*\.[a-z0-9]*[a-z][a-z0-9]*(?![a-z0-9.])/i;
 const SECTION_MARKER_RE = /^\s*(?:#{1,6}\s|🙋|✏️|👀|⏭|❓|📌)/u;
+// 본문 "답변 희망(멘토)" 섹션 헤더 판별 — 줄머리(선택적 마커·공백 뒤)에서 시작할 때만 섹션으로 본다.
+// "멘토"를 선택으로 완화하면 "답변 희망"이 흔한 표현이라 오탐이 커진다 — 질문 본문 문장 속
+// "빠른 답변 희망합니다"(뒤에 붙은 dot 토큰·다음 줄 핸들까지) 오인을 막기 위해 줄머리 앵커로 헤더만 잡는다.
+// 실데이터(3기)는 헤더를 마크다운 볼드로 감싼다("🙋 **답변 희망 멘토**", "## **🙋답변 희망 멘토**").
+// 마커 앞뒤의 `*`·`_`·공백을 건너뛰지 않으면 본문 @핸들을 통째로 놓치므로([*_\s]*) 허용한다
+// (줄머리 앵커·"답변" 시작 요구·핸들 존재 가드는 그대로라 문장 속 "답변 희망"은 여전히 미매칭).
+const DESIRED_HEADER_RE = /^\s*(?:#{1,6}\s*)?[*_\s]*(?:🙋|✏️|👀|⏭|❓|📌)?[*_\s]*답변\s*희망(?:\s*멘토)?/u;
 // 디스코드 스노우플레이크 ID — 현재 17~19자리이며 여유를 둬 20자리까지 허용한다.
 const DISCORD_ID_RE = /^\d{17,20}$/;
 
@@ -46,7 +56,7 @@ const DISCORD_ID_RE = /^\d{17,20}$/;
  * 제목/본문에서 답변 희망 멘토 표기를 추출한다.
  * 제목 캡처는 "mentor.one(이름)" 같은 병기 때문에 그대로 쓰지 않고 핸들 토큰만 재추출한다.
  * 본문은 질문 내용의 @어노테이션·이메일·버전 번호를 멘토로 오인하지 않도록
- * "답변 희망 멘토" 표기 줄(+바로 다음 줄)로만 스캔을 한정한다.
+ * "답변 희망(멘토)" 헤더 줄(+바로 다음 줄)로만 스캔을 한정한다("멘토" 선택 완화 후에도 줄머리 앵커 유지).
  * @param {{title?: string, body?: string}} discussion
  * @returns {{handle: string|null, githubLogin: string|null}|null} 표기가 전혀 없으면 null
  */
@@ -328,16 +338,18 @@ function mentorsFilePathFromEnv(env) {
 }
 
 /**
- * 본문에서 "답변 희망 멘토" 표기 줄과 바로 다음 내용 줄만 잘라낸다.
+ * 본문에서 "답변 희망(멘토)" 표기 줄과 바로 다음 내용 줄만 잘라낸다.
+ * "멘토"를 선택으로 완화했으므로, "답변 희망"이 문장 속(예: "빠른 답변 희망합니다")에서
+ * 걸리지 않도록 줄머리 앵커(DESIRED_HEADER_RE)로 헤더 줄만 찾는다.
  * (다음 줄이 새 섹션 헤더면 제외 — 멘토 표기가 비어 있는 템플릿 대응)
  */
 function mentorSectionText(body) {
-  const index = (body ?? '').search(/답변\s*희망\s*멘토/);
-  if (index === -1) return null;
+  const lines = (body ?? '').split('\n');
+  const headerIndex = lines.findIndex((line) => DESIRED_HEADER_RE.test(line));
+  if (headerIndex === -1) return null;
 
-  const lines = body.slice(index).split('\n');
-  const scanLines = [lines[0]];
-  const nextLine = lines.slice(1).find((line) => line.trim());
+  const scanLines = [lines[headerIndex]];
+  const nextLine = lines.slice(headerIndex + 1).find((line) => line.trim());
   if (nextLine && !SECTION_MARKER_RE.test(nextLine)) scanLines.push(nextLine);
   return scanLines.join('\n');
 }
