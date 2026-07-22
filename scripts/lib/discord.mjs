@@ -621,8 +621,12 @@ export async function deliverThreadedComment(transport, { number, content }, opt
       };
     }
   }
-  await sendBotMessage(token, feedChannelId, content, options);
-  return { via: 'channel', threadId: null, reason: 'not-found' };
+  // 스레드가 아예 없으면(원 글 알림 메시지가 삭제됐거나, 배포 전에 올라온 글이라 스레드가
+  // 생긴 적이 없는 경우) **알리지 않는다** — 새 글 알림만 이어지는 피드 채널에 코멘트 메시지가
+  // 단독으로 끼면 맥락 없이 지저분해지기 때문(운영 결정 2026-07-22).
+  // 조회·전송 실패(lookup-failed / thread-post-failed)는 스레드가 있는데 못 쓴 경우라
+  // 위에서 채널로 폴백한다 — 일시적 오류로 답변 알림을 잃지 않기 위함.
+  return { via: 'skipped', threadId: null, reason: 'no-thread' };
 }
 
 function truncateLine(line, limit) {

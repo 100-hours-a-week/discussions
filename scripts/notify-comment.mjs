@@ -120,6 +120,15 @@ async function main() {
       number: discussion.number,
       content: message,
     });
+    if (result.via === 'skipped') {
+      // 원 글 스레드가 없으면 알리지 않는다(피드 채널 노이즈 방지). 조용한 실패가 아니라
+      // 의도된 스킵이므로 사유를 남기고 정상 종료한다.
+      console.log(
+        `#${discussion.number} 원 글 스레드가 없어 코멘트 알림을 건너뜁니다 (${result.reason}) — ` +
+          '원 글 알림 메시지가 삭제됐거나 봇 도입 전에 올라온 글입니다.',
+      );
+      return;
+    }
     if (result.via === 'thread') {
       console.log(`원 디스커션 스레드에 코멘트 등록: #${discussion.number} (thread ${result.threadId})`);
     } else {
