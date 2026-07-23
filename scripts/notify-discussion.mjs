@@ -242,9 +242,9 @@ async function handleEdited({
  *
  * 표기 문자열만 비교하면 같은 멘토를 다르게 적은 수정이 "변경"으로 오인돼, 이미 핑을 받은
  * 멘토에게 알림이 다시 가는 스팸이 된다. 실제로 흔한 표기 변화는 다음과 같다:
- *   - 본문 "@Coreight98" → "max.cha(차민수)/@Coreight98" (템플릿 형식대로 보강)
- *   - 본문에만 있던 표기를 제목 "(답변희망멘토: max.cha)"로 옮김
- *   - 별칭 핸들(max.chaa)을 정식 핸들(max.cha)로 정정
+ *   - 본문 "@github-login-1" → "mentor.one(이름)/@github-login-1" (템플릿 형식대로 보강)
+ *   - 본문에만 있던 표기를 제목 "(답변희망멘토: mentor.one)"로 옮김
+ *   - 별칭 핸들(mentor.onee)을 정식 핸들(mentor.one)로 정정
  * 따라서 멘토 매핑으로 해석한 동일성 키로 비교한다.
  * @param {{handle: string|null, githubLogin: string|null}|null} previous
  * @param {{handle: string|null, githubLogin: string|null}|null} current
