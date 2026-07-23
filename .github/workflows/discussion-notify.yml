@@ -1,10 +1,13 @@
-# 새 디스커션 등록 시 디스코드 알림
+# 새 디스커션 등록·수정 시 디스코드 알림
 # 주의: discussion 이벤트는 이 파일이 default 브랜치에 있어야 동작한다.
 name: Discussion Discord Notify
 
 on:
   discussion:
-    types: [created]
+    # created: 새 글 알림 + 스레드 생성
+    # edited : 답변 희망 멘토가 새로 지정·변경된 경우에만 원본 메시지 갱신 + 스레드에 멘션
+    #          (그 외 수정은 스크립트가 스킵한다 — 스팸 방지)
+    types: [created, edited]
 
 permissions:
   contents: read

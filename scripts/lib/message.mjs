@@ -34,6 +34,36 @@ export function buildNewDiscussionMessage(discussion) {
 }
 
 /**
+ * 답변 희망 멘토가 뒤늦게 지정·변경됐을 때 원 글 스레드에 남길 짧은 알림 메시지.
+ *
+ * 원본 메시지를 수정해도 디스코드는 핑을 보내지 않으므로, 실제 알림은 이 메시지가 담당한다.
+ * 멘션은 새 글 알림과 같은 3단 폴백(ID → 유저네임 텍스트 → 핸들만)을 쓴다.
+ * 본문에는 학생이 쓴 자유 텍스트(제목·본문)를 넣지 않는다 — 멘션 인젝션 표면을 만들지 않기 위해
+ * 파싱으로 추출된 멘토 핸들만 싣는다(전송 시 화이트리스트도 함께 적용한다).
+ * @param {{mentor: string, previousMentor?: string|null, mentorDiscordId?: string|null, mentorDiscordUsername?: string|null}} params
+ * @returns {string}
+ */
+export function buildMentorAssignedMessage(params) {
+  const {
+    mentor,
+    previousMentor = null,
+    mentorDiscordId = null,
+    mentorDiscordUsername = null,
+  } = params;
+
+  if (!mentor) {
+    throw new Error('buildMentorAssignedMessage: mentor는 필수입니다 (멘토가 없으면 알릴 대상도 없습니다).');
+  }
+
+  const changed = Boolean(previousMentor);
+  let message = `## 답변 희망 멘토 ${changed ? '변경' : '지정'}\n`;
+  message += `글이 수정되어 답변 희망 멘토가 ${changed ? '변경' : '지정'}되었습니다.\n`;
+  if (changed) message += `- 이전: \`${previousMentor}\`\n`;
+  message += `- 답변 희망 멘토: \`${mentor}\`${mentorTag(mentorDiscordId, mentorDiscordUsername)}`;
+  return message;
+}
+
+/**
  * 새 코멘트(답변) 등록 알림 메시지. 답변 내용 미리보기는 넣지 않는다.
  * 답변자는 mentors.json에서 사내 핸들로 해석된 멘토일 때만 표기한다 (그 외에는 줄 생략).
  * @param {{title: string, url: string, mentorHandle?: string|null, category: string}} comment

@@ -139,15 +139,17 @@ export async function sendToDiscord(webhookUrl, content, options = {}) {
 }
 
 /**
- * 디스코드에 JSON을 POST하고 429/5xx를 1회 재시도한다 (웹훅·봇 공용 저수준 전송).
+ * 디스코드에 JSON을 보내고(기본 POST) 429/5xx를 1회 재시도한다 (웹훅·봇 공용 저수준 전송).
  * 성공 시 Response를 그대로 반환한다 — 봇 모드는 응답 본문에서 message.id·thread.id를
  * 읽어야 하므로 호출자가 필요 시 body를 파싱할 수 있게 한다(웹훅은 무시).
+ *
+ * method로 PATCH(메시지 수정) 같은 다른 메서드도 같은 재시도·리댁션 정책을 공유한다.
  *
  * 실패 메시지에는 비밀값(웹훅 URL·봇 토큰)이 남지 않도록 secret을 placeholder로 가린다.
  * fetch가 던지는 오류·응답 본문 모두 퍼블릭 Actions 로그로 흘러가므로 반드시 리댁션한다.
  * @param {string} url
  * @param {object} payload JSON 직렬화할 본문
- * @param {{fetchImpl?: typeof fetch, waitFn?: (ms:number)=>Promise<void>, headers?: Record<string,string>, secret?: string, secretPlaceholder?: string, subject?: string}} options
+ * @param {{fetchImpl?: typeof fetch, waitFn?: (ms:number)=>Promise<void>, headers?: Record<string,string>, secret?: string, secretPlaceholder?: string, subject?: string, method?: string}} options
  * @returns {Promise<Response>}
  */
 async function postJsonWithRetry(url, payload, options = {}) {
@@ -158,10 +160,11 @@ async function postJsonWithRetry(url, payload, options = {}) {
     secret = url,
     secretPlaceholder = '[REDACTED]',
     subject = '요청',
+    method = 'POST',
   } = options;
 
   const request = {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(payload),
   };
@@ -401,6 +404,57 @@ export async function sendBotMessage(token, channelId, content, options = {}) {
 }
 
 /**
+ * 봇 모드: 이미 보낸 봇 메시지의 content를 통째로 교체한다 (PATCH /channels/{id}/messages/{id}).
+ *
+ * ⚠️ 디스코드에서 **메시지 수정은 핑(알림)을 발생시키지 않는다** — allowed_mentions로 화이트리스트를
+ * 걸어도 수정된 본문의 멘션으로 새 알림이 가지 않는다. 기록(화면에 보이는 내용)만 바로잡는 용도이며,
+ * 실제로 누군가에게 알려야 한다면 별도 메시지를 보내야 한다(deliverMentorAssigned 참고).
+ *
+ * 수정은 청크 분할이 불가능하다(메시지 1건 = 본문 1개). 2000자를 넘으면 조용히 잘리는 대신
+ * 명시적으로 실패시킨다.
+ * @param {string} token 봇 토큰
+ * @param {string} channelId 메시지가 있는 채널 ID
+ * @param {string} messageId 수정할 메시지 ID
+ * @param {string} content 교체할 본문
+ * @param {{allowMentions?: boolean, allowedUserIds?: string[], fetchImpl?: typeof fetch, waitFn?: (ms:number)=>Promise<void>}} options
+ * @returns {Promise<string|null>} 수정된 메시지 id (응답에서 못 읽으면 null)
+ */
+export async function editBotMessage(token, channelId, messageId, content, options = {}) {
+  const {
+    allowMentions = false,
+    allowedUserIds = null,
+    fetchImpl = fetch,
+    waitFn = defaultWait,
+  } = options;
+
+  const text = String(content ?? '');
+  if (text.length > DISCORD_CONTENT_LIMIT) {
+    throw new Error(
+      `메시지 수정 본문이 디스코드 제한(${DISCORD_CONTENT_LIMIT}자)을 초과했습니다 (${text.length}자) — 수정은 청크 분할이 불가능합니다.`,
+    );
+  }
+
+  const payload = {
+    content: text,
+    allowed_mentions: buildAllowedMentions(text, { allowMentions, allowedUserIds }),
+  };
+  const response = await postJsonWithRetry(
+    `${apiBase()}/channels/${channelId}/messages/${messageId}`,
+    payload,
+    {
+      fetchImpl,
+      waitFn,
+      headers: botHeaders(token),
+      secret: token,
+      secretPlaceholder: '[REDACTED_BOT_TOKEN]',
+      subject: '봇 메시지 수정',
+      method: 'PATCH',
+    },
+  );
+  return readResourceId(response);
+}
+
+/**
  * 봇 모드: 채널의 특정 메시지에 스레드를 생성한다. 생성된 스레드 id를 반환한다(실패 시 예외).
  * @param {string} token
  * @param {string} channelId 스레드를 걸 메시지가 있는 채널 ID
@@ -627,6 +681,57 @@ export async function deliverThreadedComment(transport, { number, content }, opt
   // 조회·전송 실패(lookup-failed / thread-post-failed)는 스레드가 있는데 못 쓴 경우라
   // 위에서 채널로 폴백한다 — 일시적 오류로 답변 알림을 잃지 않기 위함.
   return { via: 'skipped', threadId: null, reason: 'no-thread' };
+}
+
+/**
+ * 답변 희망 멘토가 뒤늦게 지정·변경됐을 때의 반영(봇 모드).
+ * 학생이 글을 올린 뒤 **수정해서** 멘토를 추가하는 실사용 패턴을 위한 경로다.
+ *
+ * 1) #번호로 원 글 스레드를 찾는다.
+ *    **메시지에서 시작한 스레드는 스레드 ID == 시작점 메시지 ID**이므로(실측 확인),
+ *    찾은 스레드 ID를 그대로 원본 피드 메시지 ID로 써서 본문을 갱신할 수 있다.
+ * 2) 원본 피드 메시지를 갱신한다(기록 정확도). 수정은 핑을 발생시키지 않는다.
+ * 3) 실제 알림을 위해 스레드 안에 멘션 메시지 1건을 남긴다(소통방 채널에는 새 메시지를 만들지 않는다).
+ *
+ * 스레드를 못 찾으면(원 글 알림이 삭제됐거나 봇 도입 전 글) 2·3 모두 건너뛴다 —
+ * 피드 채널에 맥락 없는 메시지를 새로 만들지 않는다(deliverThreadedComment의 no-thread와 동일 원칙).
+ *
+ * 실패 정책:
+ *  - 스레드 조회 실패 → 예외를 그대로 올린다(폴백 대상이 없으므로 조용히 넘기지 않는다).
+ *  - 원본 갱신 실패 → editError로 알리고 **멘션 메시지는 계속 진행한다**(알림이 본질, 기록은 부수적).
+ *  - 멘션 메시지 실패 → 예외를 그대로 올린다(멘토가 지정 사실을 못 받는 것은 실패다).
+ * @param {{token:string, guildId:string|null, channelId:string}} transport 봇 전송 계층(피드 채널)
+ * @param {{number:number|string, content:string, noticeContent:string|null}} params
+ *        content=갱신할 원본 메시지 본문, noticeContent=스레드에 남길 멘션 메시지(없으면 생략)
+ * @param {object} options sendBotMessage/editBotMessage/findThreadByNumber 옵션(fetchImpl/waitFn 등)
+ * @returns {Promise<{threadId: string|null, updated: boolean, notified: boolean, reason?: string, editError?: string}>}
+ */
+export async function deliverMentorAssigned(
+  transport,
+  { number, content, noticeContent },
+  options = {},
+) {
+  const { token, guildId, channelId: feedChannelId } = transport;
+
+  const threadId = await findThreadByNumber(token, guildId, feedChannelId, number, options);
+  if (!threadId) return { threadId: null, updated: false, notified: false, reason: 'no-thread' };
+
+  // 스레드 ID == 원본 메시지 ID (메시지에서 시작한 스레드)
+  let updated = false;
+  let editError;
+  try {
+    await editBotMessage(token, feedChannelId, threadId, content, options);
+    updated = true;
+  } catch (error) {
+    editError = error.message ?? String(error);
+  }
+
+  if (!noticeContent) {
+    return { threadId, updated, notified: false, reason: 'no-notice', ...(editError ? { editError } : {}) };
+  }
+
+  await sendBotMessage(token, threadId, noticeContent, options);
+  return { threadId, updated, notified: true, ...(editError ? { editError } : {}) };
 }
 
 function truncateLine(line, limit) {
