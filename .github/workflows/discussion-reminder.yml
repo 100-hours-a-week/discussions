@@ -1,12 +1,18 @@
 # 미답변 디스커션 리마인드
-# cron은 UTC 기준: '0 9 * * 4' = 매주 목요일 18:00 KST
+# cron은 UTC 기준: '15 9 * * 4' = 매주 목요일 18:15 KST
 # 멘토링 요일이 다르면 cron만 수정하면 된다. (KST - 9시간 = UTC)
+#
+# 왜 정시(0분)가 아니라 15분인가:
+#   GitHub Actions의 schedule은 부하가 몰리면 지연되며, 매시 정각(분=0)이 가장 혼잡한 슬롯이다.
+#   실제로 '0 9'일 때 2026-07-23 리마인드가 예정 18:00 → 실제 20:03 KST로 약 2시간 늦게 발화했다.
+#   비정시(15분)로 옮겨 정각 혼잡을 피한다. 그래도 지연·스킵은 GitHub이 보장하지 않으므로,
+#   못 나간 주가 있으면 workflow_dispatch로 수동 실행하면 된다.
 # 주의: schedule 트리거는 이 파일이 default 브랜치에 있어야 동작한다.
 name: Unanswered Discussion Reminder
 
 on:
   schedule:
-    - cron: '0 9 * * 4'
+    - cron: '15 9 * * 4'
   workflow_dispatch:
 
 permissions:
